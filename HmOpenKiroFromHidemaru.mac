@@ -1,0 +1,273 @@
+﻿/*
+ * HmOpenKiroFromHidemaru v 1.2.1.4
+ * Copyright (C) 2021-2025 Akitsugu Komiyama
+ * under the MIT License
+ */ 
+
+hidemaruversion "9.35.99";
+
+setcompatiblemode 0x08000000;
+
+jsmode "JScript\\" + currentmacrofilename;
+js {
+
+// Kiroの絶対パスの設定。kiro.exe (もしくはkiro.cmd)の場所を設定する。設定していない場合は一応自動で探す。例：@"C:\usr\kiro\kiro.exe"
+var kiroAbsolutePath = @"";
+
+
+
+var fso = createobject("Scripting.FileSystemObject");
+
+var openMode = getarg(0);
+
+// postExecMacroMemory中でも利用するため、このマクロのディレクトリを控えておく
+// (※ postExecMacroMemory中はcurrentmacrodirectoryは消失するため)
+var currentMacroDirectory = currentmacrodirectory();
+
+// 非同期なのでファイルパスが変更になってしまう可能性が僅かにあるため、控えておく
+var currentFileFullPath = hidemaru.getFileFullPath();
+
+// Kiroのパスを探す
+function getKiroAbsolutePath() {
+    if (!kiroAbsolutePath) {
+        try {
+            var success = openreg("CLASSESROOT", "Applications\\Kiro.exe\\shell\\open");
+            if (success) {
+                kiroAbsolutePath = getregstr("Icon");
+                kiroAbsolutePath = kiroAbsolutePath.replace(/"/g, '');
+            }
+        } finally {
+            closereg();
+        }
+    }
+    if (!kiroAbsolutePath) {
+        try {
+            var success = openreg("CURRENTUSER", "SOFTWARE\\Classes\\Applications\\Kiro.exe\\shell\\open");
+            if (success) {
+                kiroAbsolutePath = getregstr("Icon");
+                kiroAbsolutePath = kiroAbsolutePath.replace(/"/g, '');
+            }
+        } finally {
+            closereg();
+        }
+    }
+    if (!kiroAbsolutePath) {
+        // Whereで見つかるようならzipか何かで展開しただけのものを、手動でパスを通しているのだろう。
+        runex("where kiro.cmd", 1, 0, "", 0, "", 0, "", 0, "", 2, 0, 0, 0);
+        // 発見したようだ。
+        if (getresultex(9) == 0) {
+            kiroAbsolutePath = "kiro.cmd";
+        }
+    }
+    if (!kiroAbsolutePath) {
+        // Whereで見つかるようならzipか何かで展開しただけのものを、手動でパスを通しているのだろう。
+        runex("where kiro.exe", 1, 0, "", 0, "", 0, "", 0, "", 2, 0, 0, 0);
+        // 発見したようだ。
+        if (getresultex(9) == 0) {
+            kiroAbsolutePath = "kiro.exe";
+        }
+    }
+
+    return kiroAbsolutePath;
+}
+
+
+var gitRootDir = ""; // ちょっと格好悪いが、syncOpenKiroは同期で伝えるので、gitRootDirはグローバルにしておく。
+var gitProcess = null;
+
+findGitDir();
+
+function findGitDir() {
+    try {
+        // Kiroは、PCにちゃんと入っとるんか？
+        kiroAbsolutePath = getKiroAbsolutePath();
+
+        // kiroのパス自体が見つかってないか、パスは見つかったがそこにファイルが存在しない
+        if (!kiroAbsolutePath || !fso.FileExists(kiroAbsolutePath)) {
+            throw "Kiroが発見できませんでした。\nマクロ「HmOpenKiroFromHidemaru.mac」を編集し、変数「KiroAbsoluePath」にKiroのパスを設定してください。";
+        }
+
+        if (currentFileFullPath) {
+
+            // gitのコマンドを発行して、対象のファイルがどこかのローカルリポジトリに所得しているのかを探す
+            var currentFileDir = fso.GetParentFolderName(currentFileFullPath);
+            gitProcess = hidemaru.runProcess("git rev-parse --absolute-git-dir", currentFileDir, "stdio", "utf8");
+
+            // gitが無いんですが!!
+            if (!gitProcess) {
+                throw "git コマンドにパスが通っていません";
+
+            // 非同期用の標準出力・標準エラーのコールバック関数の設定
+            } else {
+                gitProcess.stdOut.onReadAll(readStdOutAsync);
+                gitProcess.stdErr.onReadAll(readStdErrAsync);
+                gitProcess.onClose(onCloseGitProcess);
+            }
+
+        // ファイル開いてないなら、そのままKiroを(ファイルを開かずに)起動。
+        } else {
+            openKiroNoArgs();
+        }
+
+    } catch (e) {
+        message(e);
+    }
+}
+
+
+
+function readStdOutAsync(outputText) {
+    // C:/bbbb/cccc/.git みたいな形で出てくる
+    var gitDir = outputText;
+    gitDir = gitDir.replace(/\//g, "\\");
+    gitDir = fso.GetParentFolderName(gitDir);
+
+    // フォルダは確かにあります。採用
+    if (fso.FolderExists(gitDir)) {
+        gitRootDir = gitDir;
+
+    // そんなフォルダはねぇぞ！
+    } else {
+        gitRootDir = ""; // 得体のしれないもの。不採用
+    }
+    syncOpenKiro();
+}
+
+function readStdErrAsync(outputText) {
+    syncOpenKiro();
+}
+
+
+function onCloseGitProcess() {
+    gitProcess.kill();
+    gitProcess = null;
+}
+
+var openTimeHandler;
+
+if (typeof(openTimeHandler) == "undefined") {
+    hidemaru.clearTimeout(openTimeHandler);
+}
+
+// 非同期だと使えない関数等があるので同期で。非同期から同期にするための関数
+function syncOpenKiro() {
+
+    var command = "js {openKiro()}";
+
+    // 予約という形にすることで、postExecMacroMemoryでのスケジュールが被ったとしても、リトライできるように。
+    var isScheduled = 0;
+
+    function attemptExecution() {
+        isScheduled = hidemaru.postExecMacroMemory(command)
+        if (!isScheduled) {
+	        openTimeHandler = hidemaru.setTimeout(attemptExecution, 300);
+        }
+    }
+
+    openTimeHandler = hidemaru.setTimeout(attemptExecution, 0); // まずは0ディレイで実行を試みる
+}
+
+// 何も引数なしでKiroを実行するだけ
+function openKiroNoArgs() {
+    // 対象のファイルなし
+    var command = sprintf('"%s"', kiroAbsolutePath);
+    openKiroCommand(command);
+}
+
+// テンポラリフォルダに次の時だけソースリポジトリへと移動することを許可するために
+function makeTempFile() {
+    var tempfolder = getenv("temp") || getenv("tmp");
+    if (tempfolder) {
+        var tempFileFullPath = sprintf('%s\\HmOpenKiroFromHidemaru.txt', tempfolder);
+        hidemaru.saveTextFile(tempFileFullPath, "1", "utf8");
+    }
+}
+
+// 同期関数。Kiroを指定のファイル、指定のディレクトリ(ワークスペース想定)、指定のポジションで開く
+function openKiro() {
+
+    if (!kiroAbsolutePath) { return; }
+
+    // ファイルなし
+    if (!currentFileFullPath) { return; }
+
+    var workSpaceDir = gitRootDir;
+
+    // リポジトリが見つかっていなければ、現在のファイルのディレクトリをワークスペースとする
+    if (!gitRootDir) {
+        var currentFileDir = fso.GetParentFolderName(currentFileFullPath);
+        workSpaceDir = currentFileDir;
+
+        // 自動的にリポジトリへと移動するモードなら、リポジトリ発見できてないのでscm取りやめ
+        if (openMode == "scm") { openMode = ""; }
+    }
+
+    // 謎だが最後が「\」で終わっている場合、１つ「\」を付け加える必要がある。Kiroの解釈の問題だろう
+    if (workSpaceDir[workSpaceDir.length-1] == "\\") {
+        workSpaceDir = workSpaceDir + "\\";
+    }
+
+    // Kiroで開くカーソルポジションの取得
+    var cursorPos = calcCenterPosition();
+
+
+    // ソースビューを最初からオープンに
+    if (openMode == "scm") {
+
+        makeTempFile();
+
+        // ソースビューへと自動で移行。対象のリポジトリを作業場として、対象のファイルをunicodeベース換算でのlinenoとcolumn
+        var command = sprintf('"%s" -n -g "%s" "%s:%d:%d" --extensionDevelopmentPath="%s"',
+                              kiroAbsolutePath, workSpaceDir, currentFileFullPath, cursorPos.lineno, cursorPos.column + 1, currentMacroDirectory + "\\kiro_extension");
+    } else {
+
+        // 対象のディレクトリを作業場として、対象のファイルをunicodeベース換算でのlinenoとcolumn
+        var command = sprintf('"%s" -n -g "%s" "%s:%d:%d"',
+                              kiroAbsolutePath, workSpaceDir, currentFileFullPath, cursorPos.lineno, cursorPos.column + 1);
+    }
+
+    openKiroCommand(command);
+}
+
+function openKiroCommand(command) {
+    runex(command
+        , 0     //sync   0:async, 1:sync
+        , 0, "" //stdin  0:none, 1:auto, 2:<file, 3:(reserved), 4:current content, 5:selection
+        , 0, "" //stdout 0:none, 1:auto, 2:>file 3:>>file, 4:new window, 5:insert, 6:replace, 7:>output pane, 8:>>output pane
+        , 0, "" //stderr 0:none, 1:auto or >>stdout, 2-8:same as stdout's param
+        , 0, "" //folder 0:none, 1:current, 2:specify 3:(reserved), 4:exe's
+        , 1     //show   0:auto, 1:show, 2:hide, 3-13:ShellExecute()'s SW_*
+        , 0     //draw   0:draw, 1:no draw when stdout redirected
+        , 0     //encode 0:ansi, 2:utf-16, 6:utf-8
+        , 0     //extended flags
+    );
+}
+
+
+// 秀丸上のカーソルが画面内ならば、そこと同じ場所をKiroでもカーソルの位置とする
+// カーソルが画面外ならば、今秀丸で見えてる場所あたりをKiroで開く
+function calcCenterPosition() {
+    // 秀丸内で映っている画面の最初の行は、lineno換算（エディタ的）では何行目？
+    var screenTopLineNo = ytolineno(0, screentopy());
+    var linenoWCS = lineno();
+    var columnWCS = column_wcs();
+
+    // カーソルが画面からはみ出ているか？ （正確な判定をするにはあまりに迂遠なので、簡易判定）
+    if (linenoWCS < screenTopLineNo || screenTopLineNo + windowheight() < linenoWCS) {
+        // 画面外のカーソルの位置に移動するのは今ひとつなので、今秀丸で見てる場所に近しい画面になるように、当たりをつける。
+        // 「13」は完全にマニュアルなマジックナンバーであるが、概ね今秀丸で見ているトップの行の「13行くらい下の行」を開くように Kiro に伝えると、そこを画面中央に配置しようとするのでいい感じになる。
+        linenoWCS = screenTopLineNo + 13;
+        columnWCS = 0;
+    }
+
+    return { "column": columnWCS, "lineno": linenoWCS }
+}
+
+// エラーメッセージ用
+function writeOutputPane(err) {
+    var dll = loaddll("HmOutputPane.dll");
+    dll.dllFunc.Output(hidemaru.getCurrentWindowHandle(), err + "\r\n");
+}
+
+
+} // js

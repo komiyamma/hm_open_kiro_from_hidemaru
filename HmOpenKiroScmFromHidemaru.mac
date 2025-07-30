@@ -1,0 +1,5 @@
+﻿// 外部コマンドの呼び出し
+
+setcompatiblemode 0x08000000;
+
+execmacro currentmacrodirectory + "\\HmOpenKiroFromHidemaru.mac", "scm";

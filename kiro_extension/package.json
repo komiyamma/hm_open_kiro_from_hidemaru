@@ -1,0 +1,36 @@
+{
+  "publisher": "komiyamma",
+  "name": "commandlineshowgitview",
+  "displayName": "CommandLineShowGitView",
+  "description": "Show Git Viewer",
+  "version": "0.1.8",
+  "engines": {
+    "kiro": "^0.1.9"
+  },
+  "categories": [
+    "Other"
+  ],
+  "activationEvents": [
+    "onStartupFinished"
+  ],
+  "main": "./extension.js",
+  "scripts": {
+    "kiro:prepublish": "npm run compile",
+    "compile": "tsc -p ./",
+    "watch": "tsc -watch -p ./",
+    "pretest": "npm run compile && npm run lint",
+    "lint": "eslint src",
+    "test": "kiro-test"
+  },
+  "devDependencies": {
+    "@types/kiro": "^0.1.9",
+    "@types/mocha": "^10.0.7",
+    "@types/node": "20.x",
+    "@typescript-eslint/eslint-plugin": "^8.3.0",
+    "@typescript-eslint/parser": "^8.3.0",
+    "eslint": "^9.9.1",
+    "typescript": "^5.5.4",
+    "@kiro/test-cli": "^0.0.10",
+    "@kiro/test-electron": "^2.4.1"
+  }
+}
