@@ -5,7 +5,7 @@
   "description": "Show Git Viewer",
   "version": "0.1.8",
   "engines": {
-    "kiro": "^0.1.9"
+    "vscode": "^1.92.0"
   },
   "categories": [
     "Other"
