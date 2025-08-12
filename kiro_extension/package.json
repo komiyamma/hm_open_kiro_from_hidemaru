@@ -5,7 +5,7 @@
   "description": "Show Git Viewer",
   "version": "0.1.8",
   "engines": {
-    "vscode": "^1.92.0"
+    "vscode": "^1.94.0"
   },
   "categories": [
     "Other"
@@ -15,22 +15,22 @@
   ],
   "main": "./extension.js",
   "scripts": {
-    "kiro:prepublish": "npm run compile",
+    "vscode:prepublish": "npm run compile",
     "compile": "tsc -p ./",
     "watch": "tsc -watch -p ./",
     "pretest": "npm run compile && npm run lint",
     "lint": "eslint src",
-    "test": "kiro-test"
+    "test": "vscode-test"
   },
   "devDependencies": {
-    "@types/kiro": "^0.1.9",
+    "@types/vscode": "^1.94.0",
     "@types/mocha": "^10.0.7",
     "@types/node": "20.x",
     "@typescript-eslint/eslint-plugin": "^8.3.0",
     "@typescript-eslint/parser": "^8.3.0",
     "eslint": "^9.9.1",
     "typescript": "^5.5.4",
-    "@kiro/test-cli": "^0.0.10",
-    "@kiro/test-electron": "^2.4.1"
+    "@vscode/test-cli": "^0.0.10",
+    "@vscode/test-electron": "^2.4.1"
   }
 }
